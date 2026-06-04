@@ -16,36 +16,40 @@ module Ghcask
            .gsub(/\A-|-+\z/, "")
     end
 
+    def ruby_string_literal(value)
+      value.to_s.dump
+    end
+
     def render(entry)
       return render_url(entry) if entry["source_type"] == "url"
 
       <<~RUBY
-        cask "#{entry.fetch("cask")}" do
-          version "#{entry.fetch("version")}"
-          sha256 "#{entry.fetch("sha256")}"
+        cask #{ruby_string_literal(entry.fetch("cask"))} do
+          version #{ruby_string_literal(entry.fetch("version"))}
+          sha256 #{ruby_string_literal(entry.fetch("sha256"))}
 
-          url "#{entry.fetch("asset_url")}"
-          name "#{entry.fetch("name")}"
+          url #{ruby_string_literal(entry.fetch("asset_url"))}
+          name #{ruby_string_literal(entry.fetch("name"))}
           desc "Generated from GitHub Releases"
-          homepage "https://github.com/#{entry.fetch("repo")}"
+          homepage #{ruby_string_literal("https://github.com/" + entry.fetch("repo"))}
 
-          app "#{entry.fetch("app")}"
+          app #{ruby_string_literal(entry.fetch("app"))}
         end
       RUBY
     end
 
     def render_url(entry)
       <<~RUBY
-        cask "#{entry.fetch("cask")}" do
-          version "#{entry.fetch("version")}"
-          sha256 "#{entry.fetch("sha256")}"
+        cask #{ruby_string_literal(entry.fetch("cask"))} do
+          version #{ruby_string_literal(entry.fetch("version"))}
+          sha256 #{ruby_string_literal(entry.fetch("sha256"))}
 
-          url "#{entry.fetch("asset_url")}"
-          name "#{entry.fetch("name")}"
+          url #{ruby_string_literal(entry.fetch("asset_url"))}
+          name #{ruby_string_literal(entry.fetch("name"))}
           desc "Generated from a direct package URL"
-          homepage "#{entry.fetch("homepage")}"
+          homepage #{ruby_string_literal(entry.fetch("homepage"))}
 
-          app "#{entry.fetch("app")}"
+          app #{ruby_string_literal(entry.fetch("app"))}
         end
       RUBY
     end
