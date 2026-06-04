@@ -1,0 +1,28 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ruby:
+    runs-on: macos-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Check Ruby syntax
+        run: |
+          ruby -c cmd/brew-ghcask
+          ruby -e 'Dir["{lib,test}/**/*.rb"].sort.each { |path| abort(path) unless system("ruby", "-c", path) }'
+
+      - name: Run tests
+        run: script/test
