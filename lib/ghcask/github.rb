@@ -149,17 +149,20 @@ module Ghcask
       end
 
       def select_release(repo, policy:, requested_version: nil)
-        if policy == "latest-stable" && requested_version.to_s.empty?
-          return ReleaseSelector.new([view_release(repo, nil)]).select(policy: policy, requested_version: requested_version)
-        end
-
         result = @runner.capture(["gh", "release", "list", "-R", repo, "--limit", "100", "--json", LIST_FIELDS])
         map_error!(result, repo: repo)
-        summary = ReleaseSelector.new(GitHub.normalize_release_array(GitHub.parse_json(result.stdout))).select(
-          policy: policy,
-          requested_version: requested_version
-        )
-        view_release(repo, summary.tag_name)
+        summaries = GitHub.normalize_release_array(GitHub.parse_json(result.stdout))
+        return view_release(repo, ReleaseSelector.new(summaries).select(policy: policy, requested_version: requested_version).tag_name) unless requested_version.to_s.empty?
+
+        candidates = summaries.reject(&:draft)
+        candidates = candidates.reject(&:prerelease) if policy == "latest-stable"
+        candidates = candidates.sort_by { |release| release.published_at || Time.at(0) }.reverse
+        candidates.each do |summary|
+          release = view_release(repo, summary.tag_name)
+          return release unless release.assets.empty?
+        end
+
+        ReleaseSelector.new(summaries).select(policy: policy, requested_version: requested_version)
       end
 
       private
@@ -206,11 +209,14 @@ module Ghcask
       end
 
       def select_release(repo, policy:, requested_version: nil)
-        include_prerelease = policy == "latest-prerelease" || !requested_version.to_s.empty?
-        ReleaseSelector.new(releases(repo, include_prerelease: include_prerelease)).select(
-          policy: policy,
-          requested_version: requested_version
-        )
+        release_list = releases(repo, include_prerelease: true)
+        return ReleaseSelector.new(release_list).select(policy: policy, requested_version: requested_version) unless requested_version.to_s.empty?
+
+        candidates = release_list.reject(&:draft)
+        candidates = candidates.reject(&:prerelease) if policy == "latest-stable"
+        candidates = candidates.sort_by { |release| release.published_at || Time.at(0) }.reverse
+        candidates.find { |release| !release.assets.empty? } ||
+          ReleaseSelector.new(release_list).select(policy: policy, requested_version: requested_version)
       end
 
       private

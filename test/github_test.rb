@@ -114,6 +114,30 @@ class GithubTest < Minitest::Test
     assert_equal 3, runner.commands.length
   end
 
+  def test_authenticated_gh_latest_stable_skips_empty_latest_release
+    empty_summary = release_json(tag: "v1.2.4", published_at: "2026-02-01T00:00:00Z")
+    empty_summary.delete("assets")
+    installable_summary = release_json(tag: "v1.2.3", published_at: "2026-01-01T00:00:00Z")
+    installable_summary.delete("assets")
+    empty_release = release_json(tag: "v1.2.4", published_at: "2026-02-01T00:00:00Z")
+    empty_release["assets"] = []
+    runner = FakeRunner.new(
+      executables: { "gh" => true },
+      responses: {
+        "gh auth status --active --hostname github.com --json hosts" => result(auth_json),
+        "gh release view -R owner/repo --json tagName,name,isDraft,isPrerelease,publishedAt,assets" => result(JSON.dump(empty_release)),
+        "gh release list -R owner/repo --limit 100 --json tagName,name,isDraft,isPrerelease,publishedAt" => result(JSON.dump([empty_summary, installable_summary])),
+        "gh release view v1.2.4 -R owner/repo --json tagName,name,isDraft,isPrerelease,publishedAt,assets" => result(JSON.dump(empty_release)),
+        "gh release view v1.2.3 -R owner/repo --json tagName,name,isDraft,isPrerelease,publishedAt,assets" => result(JSON.dump(release_json(tag: "v1.2.3")))
+      }
+    )
+
+    client = Ghcask::GitHub::Client.new(runner: runner)
+    release = client.select_release("owner/repo", policy: "latest-stable")
+
+    assert_equal "v1.2.3", release.tag_name
+  end
+
   def test_unauthenticated_gh_falls_back_to_curl
     raw = "HTTP/2 200\nx-ratelimit-remaining: 50\n\n#{JSON.dump(release_json(tag: "v1.0.0"))}"
     runner = FakeRunner.new(
@@ -143,6 +167,22 @@ class GithubTest < Minitest::Test
     Ghcask::GitHub::Client.new(runner: runner, env: { "GH_TOKEN" => "abc" }).releases("owner/repo")
 
     assert_includes runner.commands.last, "Authorization: Bearer abc"
+  end
+
+  def test_curl_latest_stable_skips_empty_latest_release
+    empty = release_json(tag: "v1.2.4", published_at: "2026-02-01T00:00:00Z")
+    empty["assets"] = []
+    installable = release_json(tag: "v1.2.3", published_at: "2026-01-01T00:00:00Z")
+    raw = "HTTP/2 200\n\n#{JSON.dump([empty, installable])}"
+    runner = FakeRunner.new(
+      responses: {
+        "curl --fail-with-body --location --silent --show-error --connect-timeout 10 --max-time 30 --dump-header - --header Accept: application/vnd.github+json --header X-GitHub-Api-Version: 2022-11-28 https://api.github.com/repos/owner/repo/releases?per_page=100" => result(raw)
+      }
+    )
+
+    release = Ghcask::GitHub::Client.new(runner: runner, env: {}).select_release("owner/repo", policy: "latest-stable")
+
+    assert_equal "v1.2.3", release.tag_name
   end
 
   def test_latest_stable_skips_prereleases
