@@ -536,7 +536,9 @@ module Ghcask
       installed_versions = installed_homebrew_versions(names)
       names.each do |name|
         installed_version = installed_versions[name]
-        if installed_version && installed_version.sub(/\Av/i, "") == data["casks"].fetch(name)["version"].to_s.sub(/\Av/i, "")
+        next unless installed_version
+
+        if installed_version.sub(/\Av/i, "") == data["casks"].fetch(name)["version"].to_s.sub(/\Av/i, "")
           next
         end
 

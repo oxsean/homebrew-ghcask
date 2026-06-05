@@ -240,26 +240,20 @@ class ManagerTest < Minitest::Test
     end
   end
 
-  def test_upgrade_falls_back_to_homebrew_upgrade_when_installed_version_is_unknown
+  def test_upgrade_skips_homebrew_upgrade_when_installed_version_is_unknown
     with_tap(entry) do |tap|
       github = FakeGitHub.new("owner/repo" => release("v1.0.0"))
       runner = FakeRunner.new(stdout: {
-        "brew info --cask --json=v2 ghcask/local/example" => { stdout: "", ok: false },
-        "brew upgrade --cask ghcask/local/example" => {
-          stderr: "Warning: Not upgrading example, the latest version is already installed\n"
-        }
+        "brew info --cask --json=v2 ghcask/local/example" => { stdout: "", ok: false }
       })
 
       status, stdout, stderr, runner = run_manager([], tap: tap, github: github, runner: runner)
 
       assert_equal 0, status
       assert_includes stdout, "example: already current"
-      assert_includes stdout, "Running: brew upgrade --cask ghcask/local/example"
-      assert_includes stderr, "Warning: Not upgrading example"
-      assert_equal [
-        ["brew", "info", "--cask", "--json=v2", "ghcask/local/example"],
-        ["brew", "upgrade", "--cask", "ghcask/local/example"]
-      ], runner.commands
+      refute_includes stdout, "Running: brew upgrade --cask ghcask/local/example"
+      assert_empty stderr
+      assert_equal [["brew", "info", "--cask", "--json=v2", "ghcask/local/example"]], runner.commands
     end
   end
 
