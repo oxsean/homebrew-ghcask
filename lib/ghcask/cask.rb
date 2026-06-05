@@ -20,34 +20,38 @@ module Ghcask
       return render_url(entry) if entry["source_type"] == "url"
 
       <<~RUBY
-        cask "#{entry.fetch("cask")}" do
-          version "#{entry.fetch("version")}"
-          sha256 "#{entry.fetch("sha256")}"
+        cask #{field(entry, "cask")} do
+          version #{field(entry, "version")}
+          sha256 #{field(entry, "sha256")}
 
-          url "#{entry.fetch("asset_url")}"
-          name "#{entry.fetch("name")}"
+          url #{field(entry, "asset_url")}
+          name #{field(entry, "name")}
           desc "Generated from GitHub Releases"
-          homepage "https://github.com/#{entry.fetch("repo")}"
+          homepage #{"https://github.com/#{entry.fetch("repo")}".dump}
 
-          app "#{entry.fetch("app")}"
+          app #{field(entry, "app")}
         end
       RUBY
     end
 
     def render_url(entry)
       <<~RUBY
-        cask "#{entry.fetch("cask")}" do
-          version "#{entry.fetch("version")}"
-          sha256 "#{entry.fetch("sha256")}"
+        cask #{field(entry, "cask")} do
+          version #{field(entry, "version")}
+          sha256 #{field(entry, "sha256")}
 
-          url "#{entry.fetch("asset_url")}"
-          name "#{entry.fetch("name")}"
+          url #{field(entry, "asset_url")}
+          name #{field(entry, "name")}
           desc "Generated from a direct package URL"
-          homepage "#{entry.fetch("homepage")}"
+          homepage #{field(entry, "homepage")}
 
-          app "#{entry.fetch("app")}"
+          app #{field(entry, "app")}
         end
       RUBY
+    end
+
+    def field(entry, key)
+      entry.fetch(key).to_s.dump
     end
 
     def write(path, entry)
