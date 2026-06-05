@@ -373,11 +373,11 @@ module Ghcask
       raise MalformedResponseError, "GitHub release must be an object" unless data.is_a?(Hash)
 
       Release.new(
-        tag_name: data.fetch("tagName"),
+        tag_name: data.fetch("tagName") { data.fetch("tag_name") },
         name: data["name"],
-        draft: !!data["isDraft"],
-        prerelease: !!data["isPrerelease"],
-        published_at: parse_time(data["publishedAt"]),
+        draft: !!(data["isDraft"] || data["draft"]),
+        prerelease: !!(data["isPrerelease"] || data["prerelease"]),
+        published_at: parse_time(data["publishedAt"] || data["published_at"]),
         assets: Array(data["assets"]).map { |asset| normalize_asset(asset) }
       )
     rescue KeyError => e
@@ -387,9 +387,9 @@ module Ghcask
     def normalize_asset(data)
       Asset.new(
         name: data["name"],
-        url: data["url"] || data["browserDownloadUrl"] || data["downloadUrl"],
+        url: data["browser_download_url"] || data["url"],
         size: data["size"],
-        content_type: data["contentType"]
+        content_type: data["contentType"] || data["content_type"]
       )
     end
 

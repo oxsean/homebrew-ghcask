@@ -138,12 +138,12 @@ class GithubTest < Minitest::Test
     assert_equal "v1.2.3", release.tag_name
   end
 
-  def test_unauthenticated_gh_falls_back_to_curl
-    raw = "HTTP/2 200\nx-ratelimit-remaining: 50\n\n#{JSON.dump(release_json(tag: "v1.0.0"))}"
+  def test_empty_gh_auth_hosts_falls_back_to_curl
+    raw = "HTTP/2 200\nx-ratelimit-remaining: 50\n\n#{JSON.dump(rest_release_json(tag: "v1.0.0"))}"
     runner = FakeRunner.new(
       executables: { "gh" => true },
       responses: {
-        "gh auth status --active --hostname github.com --json hosts" => result(auth_json(state: "failure")),
+        "gh auth status --active --hostname github.com --json hosts" => result(JSON.dump("hosts" => {})),
         "curl --fail-with-body --location --silent --show-error --connect-timeout 10 --max-time 30 --dump-header - --header Accept: application/vnd.github+json --header X-GitHub-Api-Version: 2022-11-28 https://api.github.com/repos/owner/repo/releases/latest" => result(raw)
       }
     )
@@ -156,7 +156,7 @@ class GithubTest < Minitest::Test
   end
 
   def test_curl_uses_token_environment
-    raw = "HTTP/2 200\n\n#{JSON.dump(release_json(tag: "v1.0.0"))}"
+    raw = "HTTP/2 200\n\n#{JSON.dump(rest_release_json(tag: "v1.0.0"))}"
     runner = FakeRunner.new(
       executables: {},
       responses: {
@@ -170,9 +170,9 @@ class GithubTest < Minitest::Test
   end
 
   def test_curl_latest_stable_skips_empty_latest_release
-    empty = release_json(tag: "v1.2.4", published_at: "2026-02-01T00:00:00Z")
+    empty = rest_release_json(tag: "v1.2.4", published_at: "2026-02-01T00:00:00Z")
     empty["assets"] = []
-    installable = release_json(tag: "v1.2.3", published_at: "2026-01-01T00:00:00Z")
+    installable = rest_release_json(tag: "v1.2.3", published_at: "2026-01-01T00:00:00Z")
     raw = "HTTP/2 200\n\n#{JSON.dump([empty, installable])}"
     runner = FakeRunner.new(
       responses: {
@@ -183,6 +183,25 @@ class GithubTest < Minitest::Test
     release = Ghcask::GitHub::Client.new(runner: runner, env: {}).select_release("owner/repo", policy: "latest-stable")
 
     assert_equal "v1.2.3", release.tag_name
+    assert_equal "https://github.com/owner/repo/releases/download/v1.2.3/Example.dmg", release.assets.first.url
+  end
+
+  def rest_release_json(tag:, prerelease: false, published_at: "2026-01-01T00:00:00Z")
+    {
+      "tag_name" => tag,
+      "name" => tag,
+      "draft" => false,
+      "prerelease" => prerelease,
+      "published_at" => published_at,
+      "assets" => [
+        {
+          "name" => "Example.dmg",
+          "browser_download_url" => "https://github.com/owner/repo/releases/download/#{tag}/Example.dmg",
+          "size" => 123,
+          "content_type" => "application/octet-stream"
+        }
+      ]
+    }
   end
 
   def test_latest_stable_skips_prereleases
