@@ -1,19 +1,21 @@
 # ghcask
 
-## Documentation
+**English** | [中文](README.zh-CN.md)
 
-- [中文 README](README.zh-CN.md)
+`ghcask` is a Homebrew external command (`brew ghcask`) that turns GitHub Release
+assets or direct package URLs into locally-generated Homebrew casks. It is for
+macOS apps and CLI tools not in the official Homebrew Cask index that ship a
+`.dmg`, `.pkg`, `.zip`, a tarball (`.tar.gz`/`.tgz`/`.tar.xz`/`.tar.bz2`/`.tar.zst`),
+or a bare executable. A bundled `.app` becomes an `app` cask, a `.pkg` becomes a
+`pkg` cask (with a `pkgutil` uninstall when the identifier can be read), and a
+single Mach-O executable becomes a `binary` cask (with `manpage` and shell
+completions wired up when the archive bundles them next to the binary).
 
-`ghcask` is a Homebrew external command that turns GitHub Release assets or direct package URLs into local Homebrew casks. It is for macOS apps that publish `.dmg`, `.zip`, `.tar.gz`, or `.tgz` files but are not available in the official Homebrew Cask index.
+ghcask **never installs apps itself**. It generates a cask, primes Homebrew's
+cache, and then delegates `install` / `reinstall` / `upgrade` / `uninstall` to
+`brew` — so managed apps behave like any other cask.
 
-## Why ghcask?
-
-- Install more Mac apps with Homebrew, even when they are not listed in the official Homebrew Cask index or GitHub is not their download home.
-- Replace release-page hunting, manual downloads, and drag-and-drop installs with one familiar command.
-- Keep everyday app management in one workflow: install, update, reinstall, inspect, uninstall, and clean up from the terminal.
-- Try prereleases when you need them, pin known-good versions when stability matters, and return to your chosen release track when you are ready.
-- Bring your generated app setup to another Mac with `Brewghcask.json` and Brewfile-friendly cask entries.
-- Stay in control without waiting for a public cask review or publishing personal cask definitions.
+Pure Ruby, stdlib only (no gems, no Bundler). macOS only.
 
 ## Install
 
@@ -22,231 +24,147 @@ brew tap oxsean/ghcask
 brew ghcask doctor
 ```
 
-`brew ghcask init` is available as an explicit repair/setup command, but normal commands create the local generated tap automatically.
+Normal commands create the generated local tap automatically; `brew ghcask init`
+is the explicit setup/repair entry point.
 
-## Quick Start
+## Quick start
 
 ```sh
-# Install the latest stable GitHub Release and then install the app through Homebrew.
+# Latest stable GitHub Release, then install through Homebrew.
 brew ghcask install owner/repo
 
-# Install from a direct .dmg, .zip, .tar.gz, or .tgz package URL.
-brew ghcask install cask-name --url https://example.com/downloads/App.dmg
+# A direct package URL (the positional argument is the cask name).
+brew ghcask install cask-name --url https://example.com/App.dmg
 
-# Full GitHub repository URLs are accepted.
+# Full repository URLs and release-tag URLs are accepted.
 brew ghcask install https://github.com/owner/repo
-
-# GitHub release tag URLs install that specific release.
 brew ghcask install https://github.com/owner/repo/releases/tag/v1.2.3
 
-# Generate the local cask without installing the app.
-brew ghcask install owner/repo --no-install
+# Generate the cask without installing (accepts multiple GitHub targets).
+brew ghcask generate owner/repo owner/other-repo
 
-# Allow prerelease releases.
+# Allow prereleases, or pin a specific version.
 brew ghcask install owner/repo --prerelease
-
-# Install a specific GitHub Release tag or version.
 brew ghcask install owner/repo --version v1.2.3
+# Move a prerelease cask back onto the stable track.
+brew ghcask reinstall owner/repo --stable
 
-# Specific GitHub versions are pinned by default; unpin by cask name to follow the saved release track again.
-brew ghcask unpin cask-name
-brew ghcask unpin owner/repo
+# Search GitHub for a repo (most-starred first), then install it.
+brew ghcask search hosts file manager
+# If asset auto-selection is ambiguous, the error lists the candidates — pick one.
+brew ghcask install owner/repo --asset '*-arm64.dmg' --arch arm64
 
-# Set the cask version explicitly for a direct URL source.
-brew ghcask install cask-name --url https://example.com/App.dmg --version 1.2.3
+# Preview the generated cask and the brew command without writing or installing.
+brew ghcask install owner/repo --dry-run
+
+# Disambiguate when a package bundles several apps/binaries.
+brew ghcask install owner/repo --app "Example.app"   # or --cmd NAME for a CLI binary
+
+# Override the inferred cask name, or pre-trust the generated cask (-t).
+brew ghcask install owner/repo --cask my-name -t
+
+# Machine-readable output for scripts (list and info).
+brew ghcask list --json
+
+# Skip macOS quarantine for an unsigned app (-s = --no-quarantine).
+brew ghcask install owner/repo -s
+
+# Pass flags ghcask doesn't recognize straight to brew, after `--`.
+# Works on install, reinstall, upgrade, and uninstall.
+brew ghcask install owner/repo -- --appdir=/Applications --verbose
 ```
-
-## How It Works
-
-For a GitHub repository, `ghcask`:
-
-1. finds the selected GitHub Release;
-2. selects a macOS `.dmg`, `.zip`, `.tar.gz`, or `.tgz` asset for the local architecture;
-3. downloads the asset and calculates `sha256`;
-4. infers the `.app` bundle when possible;
-5. writes a generated cask into a local generated tap;
-6. moves the downloaded package into Homebrew's cask cache;
-7. delegates install, reinstall, upgrade, and uninstall operations to Homebrew.
-
-If the generated cask already exists, `install` uses the existing local cask and skips the GitHub lookup. Use `update` to refresh GitHub release metadata.
-
-For a direct package URL, `ghcask`:
-
-1. validates that the URL points to a `.dmg`, `.zip`, `.tar.gz`, or `.tgz`;
-2. downloads the package and calculates `sha256`;
-3. infers the `.app` bundle and version when possible;
-4. writes a generated cask with `source_type: url`;
-5. moves the downloaded package into Homebrew's cask cache;
-6. delegates install and reinstall operations to Homebrew.
-
-Direct URL sources are not checkable for newer upstream releases. To switch a direct URL cask to a newer package, run `reinstall` with the new URL.
 
 ## Commands
 
+| Command | What it does |
+| --- | --- |
+| `init` | Prepare or repair the generated local tap |
+| `generate owner/repo [...]` | Generate cask(s) without installing |
+| `install owner/repo [...]` | Generate and install |
+| `install cask --url URL` | Generate and install from a direct URL |
+| `reinstall cask\|owner/repo [...]` | Reinstall through Homebrew |
+| `update` | Refresh all GitHub cask metadata (no upgrade) |
+| `upgrade [cask ...]` | Refresh, then let Homebrew upgrade installed apps (`--greedy`: include self-updating casks) |
+| `outdated [cask ...]` | Show installed casks behind the latest release (`--all`: every managed cask, installed or not; `--greedy`: include self-updating casks) |
+| `list` / `info` | Inspect managed casks (`--json` for machine-readable output) |
+| `search QUERY` | Search GitHub repositories, most-starred first (like `brew search`) |
+| `pin` / `unpin` | Pin a GitHub cask to a release, or follow its track |
+| `uninstall` / `remove` / `rm` | Uninstall and mark the entry uninstalled |
+| `cleanup [cask ...]` | Prune stale records, or force-remove a named one |
+| `dump` / `restore` | Back up / restore via `Brewghcask.json` |
+| `doctor` | Check the external tools ghcask relies on |
+
+Run `brew ghcask --help` for the full option list.
+
+## Quarantine
+
+macOS quarantines downloaded apps; unsigned apps then refuse to launch. ghcask
+supports `-s` / `--no-quarantine` on `install` and `reinstall`:
+
+- The chosen policy is stored in the registry, so `upgrade`, `dump`, and `restore`
+  all honor it.
+- `--no-quarantine` is passed to `brew install`, **and** ghcask strips the
+  `com.apple.quarantine` attribute from the app after `install`, `reinstall`, and
+  `upgrade`.
+- The app path comes from Homebrew's real artifact targets
+  (`brew info --cask --json=v2`), so a custom appdir works correctly.
+- `--no-quarantine` only changes how ghcask installs an app you trust; it is not a
+  blanket Gatekeeper bypass. Only use it for software you trust.
+
+`brew ghcask info <cask>` shows the current `Quarantine: enabled/disabled` state.
+
+## Uninstall / zap
+
+`brew ghcask uninstall <cask>` removes the app through Homebrew. For app casks,
+ghcask also generates a `zap` stanza keyed on the app's bundle identifier, so:
+
 ```sh
-# Prepare or repair local generated cask storage.
-brew ghcask init
-
-# Generate a cask from GitHub Releases and install it.
-brew ghcask install owner/repo
-
-# Generate a cask from a direct package URL and install it.
-brew ghcask install cask-name --url https://example.com/downloads/App.dmg
-
-# Refresh local cask metadata without upgrading installed apps.
-brew ghcask update
-
-# Refresh local casks and let Homebrew upgrade installed managed apps.
-brew ghcask upgrade
-
-# Clear one pinned GitHub cask and upgrade it on the saved release track.
-brew ghcask upgrade cask-name --force
-
-# Show managed casks with newer selected GitHub releases.
-brew ghcask outdated
-
-# Also compare pinned casks with their saved release track.
-brew ghcask outdated --all
-
-# Pin or unpin the generated GitHub cask update policy by cask name.
-brew ghcask pin cask-name
-brew ghcask unpin cask-name
-brew ghcask pin owner/repo
-brew ghcask unpin owner/repo
-
-# List locally managed casks.
-brew ghcask list
-
-# Show source, repository/package URL, release policy, asset, sha256, cask, and install details.
-brew ghcask info cask-name
-brew ghcask info owner/repo
-
-# Reinstall one managed cask through Homebrew.
-brew ghcask reinstall cask-name
-brew ghcask reinstall owner/repo
-
-# Pin a GitHub cask to a specific release and reinstall it.
-brew ghcask reinstall owner/repo --version v1.2.3
-brew ghcask reinstall https://github.com/owner/repo/releases/tag/v1.2.3
-
-# Switch a GitHub cask to the prerelease or stable release track and reinstall it.
-brew ghcask reinstall cask-name --prerelease
-brew ghcask reinstall cask-name --stable
-
-# Replace a direct URL source and reinstall the app.
-brew ghcask reinstall cask-name --url https://example.com/downloads/App-2.0.0.dmg
-
-# Uninstall the app through Homebrew and remove generated metadata.
-brew ghcask uninstall cask-name
-brew ghcask uninstall owner/repo
-
-# Remove generated metadata while keeping the app installed.
-brew ghcask uninstall cask-name --keep-installed
-
-# Preview uninstall without changing local state.
-brew ghcask uninstall cask-name --dry-run
-
-# Remove stale ghcask records after deleted cask files or Homebrew uninstall.
-brew ghcask cleanup
-
-# Preview cleanup changes without modifying the registry.
-brew ghcask cleanup --dry-run
-
-# Export generated Casks/*.rb and ghcask.json to ./Brewghcask.json.
-brew ghcask dump
-
-# Export to a custom path or the global ghcask JSON dump path.
-brew ghcask dump --file ~/Backup/Brewghcask.json --force
-brew ghcask dump --global --force
-
-# Restore generated local cask state from ./Brewghcask.json.
-brew ghcask restore
-
-# Restore from a custom path or the global ghcask JSON dump path.
-brew ghcask restore --file ~/Backup/Brewghcask.json --force
-brew ghcask restore --global --force
-
-# Preview restore changes without writing local state.
-brew ghcask restore --dry-run
-
-# Diagnose Homebrew, GitHub access, and local generated cask state.
-brew ghcask doctor
+brew ghcask uninstall <cask> --zap
 ```
 
-## Options
+quits the app and moves its leftover user files (preferences, caches,
+Application Support, …) to the Trash. `--zap` is opt-in and reversible (Trash,
+not delete). pkg and binary casks get no `zap` stanza.
 
-### Install Options
+## Brew alignment
 
-- `--url URL`: install directly from a `.dmg`, `.zip`, `.tar.gz`, or `.tgz` package URL. In this mode, the positional argument must be the cask name.
-- `--asset PATTERN`: select a release asset by glob pattern.
-- `--app NAME`: set the `.app` bundle name explicitly.
-- `--cask CASK`: set the generated cask name.
-- `--name NAME`: set the display name.
-- `--prerelease`: allow prerelease releases.
-- `--version VERSION`: install a specific GitHub Release tag or version.
-- `--arch ARCH`: override local architecture detection. In direct URL mode, this is recorded as metadata only and does not change the package URL.
-- `--dry-run`: show the selected release/asset metadata and write/trust/cache/install actions without writing files or installing. Direct URL dry runs may download to a temporary location for checksum and app inference, but they do not write casks, update the registry, cache packages, or install.
-- `--no-install`: generate the local cask without installing.
-- `--trust`: run `brew trust --cask` immediately after writing the generated local cask. This is Homebrew tap trust, not macOS Gatekeeper quarantine bypass.
+ghcask tries to behave like native `brew` where it can, and documents where it
+deliberately differs:
 
-For direct URL installs, `--asset`, `--cask`, and `--prerelease` are GitHub-only options and are rejected.
+- `upgrade` skips pinned casks. To move a pinned cask onto its track,
+  `unpin` it first, then `upgrade`. `upgrade -f/--force` forwards `--force` to brew
+  (overwrite files); it never re-upgrades an already-current cask — that's
+  `reinstall --force`.
+- `upgrade` reads installed versions in one batch and skips casks already at the
+  generated version (more proactive than a raw `brew upgrade` passthrough).
+- `--force` re-downloads from the source (and passes `--force` to brew). Without it,
+  install/reinstall prefer local: a GitHub cask reuses its registry entry, a direct-URL
+  cask reuses Homebrew's cached download when the URL is unchanged. This is broader than
+  brew's `--force` (which overwrites the install but keeps the cached download) — ghcask
+  folds re-fetching in because it has no `fetch`. `update`/`upgrade` always check the source;
+  their `--force` re-fetches even an already-current cask (like `brew update --force`).
+- Apps that update themselves (a Sparkle `SUFeedURL` or a bundled
+  `Sparkle.framework`) get `auto_updates true`, so `update` / `upgrade` /
+  `outdated` skip them unless you pass `--greedy` (like `brew upgrade
+  --greedy`). `outdated --all` also lists them; force a one-off refresh
+  with `reinstall <cask> --force`.
+- `uninstall` / `remove` / `rm` are aliases; if the app is already gone they warn
+  and still mark the entry uninstalled.
+- `cleanup [cask]` force-removes a named generated cask record; with no argument it
+  prunes stale records (deleted cask file / uninstalled / removed by brew).
+- `generate` creates the local cask without installing the app. Like `install`,
+  it accepts multiple GitHub targets; a direct-URL source takes exactly one target.
+- Direct-URL casks cannot be checked for upstream updates, so `update` / `outdated`
+  skip them. Replace one with `reinstall <cask> --url NEW_URL`.
 
-### Update Options
+## Pinning
 
-- `--dry-run`: show the refresh plan without writing files or upgrading apps.
+Pinning is implicit: a cask is pinned when it has a requested version.
+`--version` pins on install/reinstall; `pin` / `unpin` toggle it. The underlying
+`latest-stable` / `latest-prerelease` track is always recorded, so `unpin` returns
+the cask to that track.
 
-Direct URL casks skip source refresh during `update`. Use `brew ghcask reinstall cask-name --url NEW_URL` to replace a direct URL source.
-
-### Upgrade Options
-
-- `--dry-run`: show the refresh and upgrade plan without writing files or upgrading apps.
-- `--force`: clear one explicit GitHub cask's pinned version before upgrading on its saved release track.
-
-Direct URL casks are delegated to Homebrew during `upgrade`. `upgrade --force` is GitHub-only.
-Before delegation, `upgrade` reads installed cask versions in a batch and skips casks that already match the generated cask version.
-
-### Outdated Options
-
-- `--all`: also compare pinned casks against their saved release track.
-
-Direct URL casks are skipped by default. With `--all`, they are reported as not checkable.
-
-### Pin and Unpin
-
-- `pin cask-name|owner/repo`: keep a GitHub cask on its current generated release during `update` and `upgrade`.
-- `unpin cask-name|owner/repo`: clear the pinned release so the GitHub cask follows its saved release track again.
-
-Installing or reinstalling a GitHub cask with `--version` pins it automatically by setting `requested_version`; `release_policy` continues to store the saved stable or prerelease track. Direct URL casks do not use pinning; replace them with `reinstall cask-name --url NEW_URL`.
-
-### Reinstall Options
-
-- `--url URL`: replace the direct package URL before reinstalling.
-- `--app NAME`: set the `.app` bundle name explicitly when refreshing metadata.
-- `--name NAME`: set the display name when refreshing metadata.
-- `--version VERSION`: for GitHub sources, select and pin a specific release before reinstalling. With `--url`, override the inferred direct URL package version.
-- `--prerelease`: switch a GitHub cask to the latest prerelease policy, refresh it, and reinstall it.
-- `--stable`: switch a GitHub cask to the latest stable policy, refresh it, and reinstall it.
-- `--arch ARCH`: override architecture metadata when refreshing metadata. In direct URL mode, this is recorded as metadata only and does not change the package URL.
-- `--force`: pass `--force` to Homebrew reinstall so existing artifacts can be overwritten.
-- `--dry-run`: preview the Homebrew reinstall command. With `--version`, `--prerelease`, `--stable`, a GitHub tag URL, or `--url`, preview refreshed metadata without writing files, caching packages, or reinstalling.
-
-`--version`, `--prerelease`, and `--stable` are mutually exclusive. Without one of those, a GitHub tag URL, or `--url`, `reinstall` uses the existing generated cask and does not refresh source metadata.
-
-### Uninstall Options
-
-- `--keep-installed`: remove ghcask metadata and generated cask file without uninstalling the app.
-- `--dry-run`: preview uninstall without removing apps, metadata, or generated cask files.
-
-### Dump and Restore Options
-
-- `--file PATH`: use a custom `Brewghcask.json` path.
-- `--global`: use `~/.homebrew/Brewghcask.json`.
-- `--force`: overwrite dump output or restore same-name casks.
-- `--dry-run`: preview dump or restore without writing local state.
-
-## Backup and Restore
-
-For a simple machine-to-machine backup, export the generated casks and registry on the old Mac, then restore them before running `brew bundle` on the new Mac:
+## Backup and restore
 
 ```sh
 # Old Mac
@@ -254,60 +172,58 @@ brew ghcask dump --global --force
 
 # New Mac
 brew tap oxsean/ghcask
-brew trust --tap oxsean/ghcask
-brew ghcask restore --global
-brew bundle
+brew ghcask restore --global --install   # restore + install the missing casks in one pass
 ```
 
-`Brewghcask.json` stores generated cask definitions and metadata only. It does not include downloaded packages, installed app bundles, or Homebrew's cache.
+`restore --install` installs the restored casks that aren't installed yet
+(idempotent — already-installed casks are skipped), so a new machine needs one
+command instead of a separate `brew bundle` pass. Drop `--install` to only write
+the cask definitions. Use `--file PATH` to read or write a custom location instead
+of the default `Brewghcask.json` (or `--global`).
 
-## GitHub Access
-
-`ghcask` prefers the GitHub CLI when `gh` is installed and authenticated. If `gh` is unavailable or unauthenticated, it falls back to `curl`.
-
-Public repositories can work with anonymous GitHub API calls, but anonymous access has lower rate limits. For more reliable access, use one of:
-
-```sh
-gh auth login
-export GH_TOKEN=...
-export GITHUB_TOKEN=...
-```
-
-`ghcask` never calls `gh auth status --show-token`.
-
-## Local Data and Brewfile
-
-Generated casks and registry metadata are stored under the local generated tap:
-
-```text
-$(brew --repository)/Library/Taps/ghcask/homebrew-local/
-```
-
-The distribution tap stays clean.
-
-After a cask has been generated, Brewfile entries can reference it directly:
+`Brewghcask.json` stores generated cask definitions and registry entries (including
+the quarantine policy) only — not downloaded packages or installed apps. After a
+cask is generated, Brewfile entries can reference it directly:
 
 ```ruby
 tap "oxsean/ghcask"
 cask "ghcask/local/example"
 ```
 
-On a new machine, restore generated local casks before running `brew bundle`:
+## GitHub access
+
+ghcask prefers the GitHub CLI when `gh` is installed and authenticated, and falls
+back to anonymous `curl` (or `GH_TOKEN` / `GITHUB_TOKEN`) otherwise. For reliable
+access on private repos or to avoid anonymous rate limits:
 
 ```sh
-brew tap oxsean/ghcask
-brew ghcask restore --global
-brew bundle
+gh auth login
+export GH_TOKEN=...
 ```
 
-`brew ghcask dump` exports generated `Casks/*.rb` files and `ghcask.json` into `Brewghcask.json`. It applies the same stale-record filtering as `cleanup`. `restore` restores entries from the dump; `--force` overwrites same-name casks.
+**Both metadata and asset downloads are authenticated.** Release assets are fetched
+with the same backend as the lookup: `gh release download` when `gh` is
+authenticated, or the GitHub API asset endpoint with an `Authorization` header when
+a token is set. A bare anonymous `curl` only works for public repos.
 
-## Development QA
+**Private repositories**: ghcask downloads the asset (authenticated) and primes
+Homebrew's cache, so `install` works. The generated cask's `url` is the standard
+release URL, which Homebrew can re-fetch only if it has credentials; for a private
+repo, a later re-download after `brew cleanup` needs your GitHub auth in the
+environment. Re-run `brew ghcask reinstall <cask> --force` to re-prime the cache.
+`install --url` pointing at a GitHub-hosted file — a release asset
+(`github.com/.../releases/download/...`) or a committed file
+(`raw.githubusercontent.com/...`) — is downloaded with your token (from the env
+or `gh auth token`), so private files work. A `--url` on any other host uses a
+plain curl with no auth (the token is never sent off GitHub).
+
+## Development
 
 ```sh
-script/test
-ruby cmd/brew-ghcask --help
-ruby cmd/brew-ghcask doctor --dry-run
+script/test                                   # full Minitest suite
+ruby -Ilib -Itest test/install_test.rb        # one test file
+ruby -Ilib -Itest test/install_test.rb -n /quarantine/   # filter by name
+ruby -c cmd/brew-ghcask                        # syntax check
 GHCASK_BREW_REPOSITORY="$(mktemp -d)" ruby cmd/brew-ghcask install cli/cli --dry-run --arch arm64
 ```
 

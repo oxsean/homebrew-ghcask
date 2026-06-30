@@ -2,21 +2,26 @@
 
 require "uri"
 
+require "ghcask/errors"
+require "ghcask/package_format"
+
 module Ghcask
+  # Validates and inspects direct package URLs (the extensions in PackageFormat)
+  # and derives the homepage, asset name, and a best-effort version from the
+  # filename when the package is not behind a GitHub Release.
   module DirectUrl
-    class Error < StandardError; end
-    ARCH_VERSION_SUFFIX = /\A(?:aarch64|amd64|arm64|darwin|intel|mac|macos|universal|x64|x86-64)\z/i
+    ARCH_VERSION_SUFFIX = /\A(?:aarch64|amd64|arm64|darwin|intel|mac|macos|universal|x64|x86-64)\z/i.freeze
 
     module_function
 
     def package_url(raw)
       uri = URI.parse(raw.to_s)
       raise URI::InvalidURIError unless uri.is_a?(URI::HTTP) && uri.host && !uri.path.to_s.empty?
-      raise Error, "Direct URL package type is not supported yet. Use a .dmg, .zip, .tar.gz, or .tgz URL." unless package_path?(uri.path)
+      raise SourceError, "Unsupported direct URL package type. Use one of: #{PackageFormat::EXTENSIONS.sort.join(", ")}." unless package_path?(uri.path)
 
       uri.to_s
     rescue URI::InvalidURIError
-      raise Error, "Invalid direct package URL: #{raw.inspect}"
+      raise SourceError, "Invalid direct package URL: #{raw.inspect}"
     end
 
     def homepage(url)
@@ -34,11 +39,20 @@ module Ghcask
     end
 
     def package_path?(path)
-      path.to_s.downcase.end_with?(".dmg", ".zip", ".tar.gz", ".tgz")
+      PackageFormat.package?(path)
+    end
+
+    def github_host?(url)
+      host = URI.parse(url.to_s).host&.downcase
+      host == "github.com" || host == "raw.githubusercontent.com"
+    rescue URI::InvalidURIError
+      false
     end
 
     def version_from_filename(filename)
-      base = File.basename(filename.to_s, File.extname(filename.to_s))
+      base = File.basename(filename.to_s)
+      ext = PackageFormat.extension(base)
+      base = base[0...-ext.length] if ext
       match = base.match(/(?:^|[-_])v?(\d+(?:\.\d+)+(?:[-_][0-9A-Za-z.-]+)?)(?:$|[-_])/)
       return nil unless match
 

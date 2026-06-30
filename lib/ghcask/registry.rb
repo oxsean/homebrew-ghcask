@@ -4,16 +4,15 @@ require "fileutils"
 require "json"
 require "securerandom"
 
+require "ghcask/catalog"
+require "ghcask/errors"
+
 module Ghcask
+  # Atomic JSON persistence for the catalog. Reads/writes a versioned
+  # `{ "version", "casks" => { name => entry } }` document; all in-memory work
+  # happens on a Catalog.
   class Registry
     VERSION = 1
-    EMPTY = {
-      "version" => VERSION,
-      "casks" => {}
-    }.freeze
-
-    class Error < StandardError; end
-    class CorruptError < Error; end
 
     attr_reader :path
 
@@ -21,42 +20,43 @@ module Ghcask
       @path = path
     end
 
+    def init
+      save(Catalog.new) unless File.exist?(path)
+      self
+    end
+
     def ensure_exists
       return load if File.exist?(path)
 
-      save(EMPTY)
+      save(Catalog.new)
+    end
+
+    def load_if_exists
+      File.exist?(path) ? load : nil
     end
 
     def load
-      data = JSON.parse(File.read(path))
-      validate!(data)
-      data
+      raw = JSON.parse(File.read(path))
+      validate!(raw)
+      Catalog.from_h(raw)
     rescue JSON::ParserError => e
-      raise CorruptError, "registry is not valid JSON: #{e.message}"
+      raise CorruptRegistryError, "registry is not valid JSON: #{e.message}"
     rescue Errno::ENOENT
-      raise Error, "registry does not exist: #{path}"
+      raise RegistryError, "registry does not exist: #{path}"
     end
 
-    def save(data)
+    def save(catalog)
       FileUtils.mkdir_p(File.dirname(path))
-      atomic_write(JSON.pretty_generate(data) + "\n")
-      data
+      atomic_write(JSON.pretty_generate(catalog.to_h) + "\n")
+      catalog
     end
 
     private
 
     def validate!(data)
-      unless data.is_a?(Hash)
-        raise CorruptError, "registry must be a JSON object"
-      end
-
-      unless data["version"] == VERSION
-        raise CorruptError, "unsupported registry version: #{data["version"].inspect}"
-      end
-
-      unless data["casks"].is_a?(Hash)
-        raise CorruptError, "registry casks must be a JSON object"
-      end
+      raise CorruptRegistryError, "registry must be a JSON object" unless data.is_a?(Hash)
+      raise CorruptRegistryError, "unsupported registry version: #{data["version"].inspect}" unless data["version"] == VERSION
+      raise CorruptRegistryError, "registry casks must be a JSON object" unless data["casks"].is_a?(Hash)
     end
 
     def atomic_write(contents)

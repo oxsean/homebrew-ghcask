@@ -1,19 +1,18 @@
 # ghcask
 
-## 文档
+[English](README.md) | **中文**
 
-- [English README](README.md)
+`ghcask` 是一个 Homebrew 外部命令（`brew ghcask`），把 GitHub Release 资源或直接
+的安装包 URL 转换成本地生成的 Homebrew cask。它面向那些不在官方 Homebrew Cask 索引
+里、但提供 `.dmg`、`.pkg`、`.zip`、tarball（`.tar.gz`/`.tgz`/`.tar.xz`/`.tar.bz2`/
+`.tar.zst`）或裸可执行文件的 macOS 应用和命令行工具。打包的 `.app` 生成 `app` cask，
+`.pkg` 生成 `pkg` cask（能读到标识符时附带 `pkgutil` 卸载），单个 Mach-O 可执行文件
+生成 `binary` cask（当压缩包里随附 `manpage` 和补全脚本时一并接好）。
 
-`ghcask` 是一个 Homebrew 外部命令，用来把 GitHub Release asset 或直接 package URL 转换成本地 Homebrew cask。它适合那些发布了 `.dmg`、`.zip`、`.tar.gz` 或 `.tgz`，但还没有进入官方 Homebrew Cask 索引的 macOS 应用。
+ghcask **从不自己安装应用**。它生成 cask、预热 Homebrew 缓存，然后把 `install` /
+`reinstall` / `upgrade` / `uninstall` 委托给 `brew`，因此被管理的应用和普通 cask 行为一致。
 
-## 为什么需要 ghcask？
-
-- 让更多 Mac 应用进入你的 Homebrew 工作流，即使它们还没有进入官方 Homebrew Cask 索引，或者下载地址并不在 GitHub 上。
-- 告别反复打开 release 页面、手动下载、拖拽安装，用一个熟悉的命令完成安装。
-- 日常 app 管理保持统一：安装、更新、重新安装、查看信息、移除和清理都可以在终端完成。
-- 需要尝鲜时可以选择 prerelease，追求稳定时可以固定到确定版本，准备好后再切回保存的 release 轨道。
-- 通过 `Brewghcask.json` 和 Brewfile 友好的 cask 条目，把同一套 app 配置带到另一台 Mac。
-- 不必等待公开 cask 审核，也不必发布个人 cask 定义，自己的工具链自己掌控。
+纯 Ruby，仅用标准库（无 gem、无 Bundler）。仅限 macOS。
 
 ## 安装
 
@@ -22,296 +21,192 @@ brew tap oxsean/ghcask
 brew ghcask doctor
 ```
 
-`brew ghcask init` 保留为显式修复或准备命令；正常命令会自动创建本地 generated tap。
+普通命令会自动创建本地生成的 tap；`brew ghcask init` 是显式的初始化/修复入口。
 
 ## 快速开始
 
 ```sh
-# 安装最新稳定版 GitHub Release，并通过 Homebrew 安装 app。
+# 最新稳定版 GitHub Release，然后通过 Homebrew 安装。
 brew ghcask install owner/repo
 
-# 从直接 .dmg、.zip、.tar.gz 或 .tgz package URL 安装。
-brew ghcask install cask-name --url https://example.com/downloads/App.dmg
+# 直接的安装包 URL（位置参数是 cask 名）。
+brew ghcask install cask-name --url https://example.com/App.dmg
 
-# 也支持完整 GitHub 仓库地址。
+# 支持完整仓库 URL 和 release tag URL。
 brew ghcask install https://github.com/owner/repo
-
-# GitHub release tag URL 会安装这个指定 release。
 brew ghcask install https://github.com/owner/repo/releases/tag/v1.2.3
 
-# 只生成本地 cask，不安装 app。
-brew ghcask install owner/repo --no-install
+# 只生成 cask 而不安装（可接受多个 GitHub 目标）。
+brew ghcask generate owner/repo owner/other-repo
 
-# 允许选择 prerelease 版本。
+# 允许预发布版，或锁定指定版本。
 brew ghcask install owner/repo --prerelease
-
-# 安装指定 GitHub Release tag 或版本。
 brew ghcask install owner/repo --version v1.2.3
+# 把预发布 cask 切回稳定轨道。
+brew ghcask reinstall owner/repo --stable
 
-# 指定 GitHub 版本会默认 pin；用 cask name 取消 pin 后继续跟随保存的 release 轨道。
-brew ghcask unpin cask-name
-brew ghcask unpin owner/repo
+# 在 GitHub 上按 star 搜索仓库，然后安装。
+brew ghcask search hosts file manager
+# 资产自动选择有歧义时，错误信息会列出候选——用 --asset 挑一个。
+brew ghcask install owner/repo --asset '*-arm64.dmg' --arch arm64
 
-# 为直接 URL source 显式设置 cask 版本。
-brew ghcask install cask-name --url https://example.com/App.dmg --version 1.2.3
+# 预览将生成的 cask 和 brew 命令，但不写入也不安装。
+brew ghcask install owner/repo --dry-run
+
+# 当压缩包内含多个应用/可执行文件时用于消歧。
+brew ghcask install owner/repo --app "Example.app"   # CLI 工具用 --cmd NAME
+
+# 覆盖推断出的 cask 名，或预先 trust 生成的 cask（-t）。
+brew ghcask install owner/repo --cask my-name -t
+
+# 面向脚本的机器可读输出（list 和 info）。
+brew ghcask list --json
+
+# 为未签名应用跳过 macOS quarantine（-s = --no-quarantine）。
+brew ghcask install owner/repo -s
+
+# 把 ghcask 不识别的参数在 `--` 之后直接透传给 brew。
+# install、reinstall、upgrade、uninstall 都支持。
+brew ghcask install owner/repo -- --appdir=/Applications --verbose
 ```
-
-## 工作方式
-
-对 GitHub 仓库，`ghcask` 会：
-
-1. 找到选中的 GitHub Release；
-2. 根据本机架构选择 macOS `.dmg`、`.zip`、`.tar.gz` 或 `.tgz` asset；
-3. 下载 asset 并计算 `sha256`；
-4. 尽可能推导 `.app` bundle；
-5. 把生成的 cask 写入本地 generated tap；
-6. 把下载好的安装包移动到 Homebrew cask cache；
-7. 把安装、重新安装、升级和卸载交给 Homebrew。
-
-如果本地已经存在同名 generated cask，`install` 会使用已有本地 cask，并跳过 GitHub 查询。需要刷新 GitHub Release 元数据时使用 `update`。
-
-对直接 package URL，`ghcask` 会：
-
-1. 校验 URL 是否指向 `.dmg`、`.zip`、`.tar.gz` 或 `.tgz`；
-2. 下载安装包并计算 `sha256`；
-3. 尽可能推导 `.app` bundle 和版本；
-4. 写入带有 `source_type: url` 的 generated cask；
-5. 把下载好的安装包移动到 Homebrew cask cache；
-6. 把安装和重新安装交给 Homebrew。
-
-直接 URL source 无法自动检查上游是否有新版本。要把直接 URL cask 切换到新的安装包，使用带新 URL 的 `reinstall`。
 
 ## 命令
 
+| 命令 | 作用 |
+| --- | --- |
+| `init` | 准备或修复本地生成的 tap |
+| `generate owner/repo [...]` | 只生成 cask，不安装 |
+| `install owner/repo [...]` | 生成并安装 |
+| `install cask --url URL` | 从直接 URL 生成并安装 |
+| `reinstall cask\|owner/repo [...]` | 通过 Homebrew 重新安装 |
+| `update` | 刷新所有 GitHub cask 元数据（不升级） |
+| `upgrade [cask ...]` | 刷新后让 Homebrew 升级已安装的应用（`--greedy`：含自更新 cask） |
+| `outdated [cask ...]` | 列出落后于最新发布的已安装 cask（`--all`：所有被管理的 cask，无论是否安装；`--greedy`：含自更新 cask） |
+| `list` / `info` | 查看被管理的 cask（`--json` 输出机器可读格式） |
+| `search QUERY` | 按 star 搜索 GitHub 仓库（类似 `brew search`） |
+| `pin` / `unpin` | 把 GitHub cask 锁定到某个发布，或恢复跟随其发布轨道 |
+| `uninstall` / `remove` / `rm` | 卸载并把条目标记为已卸载 |
+| `cleanup [cask ...]` | 清理过期记录，或强制移除指定记录 |
+| `dump` / `restore` | 通过 `Brewghcask.json` 备份 / 恢复 |
+| `doctor` | 检查 ghcask 依赖的外部工具 |
+
+运行 `brew ghcask --help` 查看完整选项列表。
+
+## Quarantine（隔离属性）
+
+macOS 会给下载的应用加上 quarantine 属性，未签名应用会因此拒绝启动。ghcask 在
+`install` 和 `reinstall` 上支持 `-s` / `--no-quarantine`：
+
+- 所选策略会存进 registry，因此 `upgrade`、`dump`、`restore` 都会遵循它。
+- `--no-quarantine` 会传给 `brew install`，**并且** ghcask 会在 `install`、
+  `reinstall`、`upgrade` 之后从应用上剥除 `com.apple.quarantine` 属性。
+- 应用路径来自 Homebrew 的真实 artifact 目标（`brew info --cask --json=v2`），
+  因此自定义 appdir 也能正确处理。
+- `--no-quarantine` 只改变 ghcask 安装你信任的应用的方式，并非全局绕过 Gatekeeper。
+  只对你信任的软件使用它。
+
+`brew ghcask info <cask>` 会显示当前的 `Quarantine: enabled/disabled` 状态。
+
+## 卸载 / zap
+
+`brew ghcask uninstall <cask>` 通过 Homebrew 移除应用。对于 app cask，ghcask 还会
+生成一个以应用 bundle identifier 为基础的 `zap` 段，因此：
+
 ```sh
-# 准备或修复本地 generated cask 存储。
-brew ghcask init
-
-# 从 GitHub Releases 生成 cask 并安装。
-brew ghcask install owner/repo
-
-# 从直接 package URL 生成 cask 并安装。
-brew ghcask install cask-name --url https://example.com/downloads/App.dmg
-
-# 刷新本地 cask metadata，不升级已安装 app。
-brew ghcask update
-
-# 刷新本地 cask，并让 Homebrew 升级已安装的托管 app。
-brew ghcask upgrade
-
-# 清除某个 GitHub cask 的 pinned 版本，并按保存的 release 轨道升级。
-brew ghcask upgrade cask-name --force
-
-# 查看哪些托管 cask 有新的 GitHub Release。
-brew ghcask outdated
-
-# 对 pinned cask，也按保存的 release 轨道检查是否更新。
-brew ghcask outdated --all
-
-# 用 cask name 固定或取消固定 GitHub cask 的更新策略。
-brew ghcask pin cask-name
-brew ghcask unpin cask-name
-brew ghcask pin owner/repo
-brew ghcask unpin owner/repo
-
-# 列出本地托管的 cask。
-brew ghcask list
-
-# 查看 source、仓库或 package URL、release policy、asset、sha256、cask 和安装信息。
-brew ghcask info cask-name
-brew ghcask info owner/repo
-
-# 通过 Homebrew 重新安装某个托管 cask。
-brew ghcask reinstall cask-name
-brew ghcask reinstall owner/repo
-
-# 把 GitHub cask 固定到指定 release，并重新安装。
-brew ghcask reinstall owner/repo --version v1.2.3
-brew ghcask reinstall https://github.com/owner/repo/releases/tag/v1.2.3
-
-# 把 GitHub cask 切到 prerelease 或 stable release 轨道，并重新安装。
-brew ghcask reinstall cask-name --prerelease
-brew ghcask reinstall cask-name --stable
-
-# 替换直接 URL source，并重新安装 app。
-brew ghcask reinstall cask-name --url https://example.com/downloads/App-2.0.0.dmg
-
-# 通过 Homebrew 卸载 app，并移除 generated metadata。
-brew ghcask uninstall cask-name
-brew ghcask uninstall owner/repo
-
-# 只移除 ghcask 元数据，保留已安装 app。
-brew ghcask uninstall cask-name --keep-installed
-
-# 预览 uninstall，不修改本地状态。
-brew ghcask uninstall cask-name --dry-run
-
-# 清理 cask 文件已删除，或已被 Homebrew 原生命令卸载后的 stale 记录。
-brew ghcask cleanup
-
-# 预览 cleanup 会清理哪些记录，不修改 registry。
-brew ghcask cleanup --dry-run
-
-# 导出生成的 Casks/*.rb 和 ghcask.json 到 ./Brewghcask.json。
-brew ghcask dump
-
-# 导出到自定义路径或全局 ghcask JSON dump 路径。
-brew ghcask dump --file ~/Backup/Brewghcask.json --force
-brew ghcask dump --global --force
-
-# 从 ./Brewghcask.json 恢复本地 generated cask 状态。
-brew ghcask restore
-
-# 从自定义路径或全局 ghcask JSON dump 路径恢复。
-brew ghcask restore --file ~/Backup/Brewghcask.json --force
-brew ghcask restore --global --force
-
-# 预览 restore 结果，不写入本地状态。
-brew ghcask restore --dry-run
-
-# 诊断 Homebrew、GitHub 访问和本地 generated cask 状态。
-brew ghcask doctor
+brew ghcask uninstall <cask> --zap
 ```
 
-## 选项
+会退出应用，并把它遗留的用户文件（偏好设置、缓存、Application Support 等）移到废纸篓。
+`--zap` 需显式开启，且可恢复（移到废纸篓，而非删除）。pkg 和 binary cask 不会生成
+`zap` 段。
 
-### Install 选项
+## 与 brew 对齐
 
-- `--url URL`：直接从 `.dmg`、`.zip`、`.tar.gz` 或 `.tgz` package URL 安装。使用这个模式时，位置参数必须是 cask 名称。
-- `--asset PATTERN`：用 glob pattern 选择 release asset。
-- `--app NAME`：显式设置 `.app` bundle 名称。
-- `--cask CASK`：设置生成的 cask 名称。
-- `--name NAME`：设置显示名称。
-- `--prerelease`：允许选择 prerelease 版本。
-- `--version VERSION`：安装指定 GitHub Release tag 或版本。
-- `--arch ARCH`：覆盖本机架构推导。直接 URL 模式下只记录为 metadata，不会改变 package URL。
-- `--dry-run`：展示选中的 release/asset metadata，以及 write/trust/cache/install 动作计划，不写文件、不安装。直接 URL dry-run 可能会下载到临时目录用于计算 checksum 和推导 app，但不会写 cask、更新 registry、缓存 package 或安装。
-- `--no-install`：只生成本地 cask，不安装。
-- `--trust`：写入生成的本地 cask 后立即执行 `brew trust --cask`。这是 Homebrew tap trust，不是绕过 macOS Gatekeeper quarantine。
+ghcask 尽量在能对齐处表现得和原生 `brew` 一致，并标注它有意不同的地方：
 
-直接 URL install 中，`--asset`、`--cask` 和 `--prerelease` 是 GitHub-only 选项，会被拒绝。
+- `upgrade` 会跳过被锁定的 cask。要把锁定的 cask 移回其轨道，先 `unpin`
+  再 `upgrade`。`upgrade -f/--force` 会把 `--force` 透传给 brew（覆盖文件）；它不会
+  重新升级已是最新的 cask —— 那是 `reinstall --force` 的职责。
+- `upgrade` 一次性批量读取已安装版本，并跳过已经处于生成版本的 cask（比直接透传
+  `brew upgrade` 更主动）。
+- `--force` 从源头重新下载（并把 `--force` 透传给 brew）。不加时 install/reinstall 优先用
+  本地：GitHub cask 复用注册表条目，直接 URL cask 在 URL 未变时复用 Homebrew 的下载缓存。
+  这比 brew 自己的 `--force`（只覆盖安装、仍用缓存）更宽——因为 ghcask 没有 `fetch`，把
+  "重抓"折进了 `--force`。`update`/`upgrade` 总是查源头;它们的 `--force` 会连"已是最新"的
+cask 也重新抓取(对齐 `brew update --force`)。
+- 自更新的应用（带有 Sparkle 的 `SUFeedURL` 或随附 `Sparkle.framework`）会被打上
+  `auto_updates true`，因此 `update` / `upgrade` / `outdated` 默认跳过它们，除非加
+  `--greedy`（对齐 `brew upgrade --greedy`）。`outdated --all` 也会列出它们；要单次
+  强制刷新用 `reinstall <cask> --force`。
+- `uninstall` / `remove` / `rm` 互为别名；若应用已不在，会给出警告并仍把条目标记为已卸载。
+- `cleanup [cask]` 强制移除指定的生成记录；不带参数时清理过期记录（cask 文件已删除 /
+  已卸载 / 被 brew 移除）。
+- `generate` 只生成本地 cask 而不安装应用。与 `install` 一样可接受多个 GitHub 目标；
+  直接 URL 源只接受一个目标。
+- 直接 URL 的 cask 无法检查上游更新，因此 `update` / `outdated` 会跳过它们。用
+  `reinstall <cask> --url NEW_URL` 替换。
 
-### Update 选项
+## 锁定（Pinning）
 
-- `--dry-run`：展示刷新计划，不写文件、不升级 app。
-
-直接 URL cask 在 `update` 时会跳过 source refresh。要替换直接 URL source，使用 `brew ghcask reinstall cask-name --url NEW_URL`。
-
-### Upgrade 选项
-
-- `--dry-run`：展示刷新和升级计划，不写文件、不升级 app。
-- `--force`：升级前清除一个显式指定的 GitHub cask 的 pinned 版本，并按保存的 release 轨道升级。
-
-直接 URL cask 在 `upgrade` 时交给 Homebrew 处理。`upgrade --force` 只适用于 GitHub source。
-在交给 Homebrew 前，`upgrade` 会批量读取已安装 cask 版本；如果已安装版本和生成的 cask version 一致，就会跳过这个 cask。
-
-### Outdated 选项
-
-- `--all`：对 pinned cask，也按保存的 release 轨道比较。
-
-直接 URL cask 默认跳过。使用 `--all` 时，会显示为 not checkable。
-
-### Pin 和 Unpin
-
-- `pin cask-name|owner/repo`：让 GitHub cask 在 `update` 和 `upgrade` 时保持当前 generated release。
-- `unpin cask-name|owner/repo`：清除 pinned release，让 GitHub cask 继续跟随保存的 release 轨道。
-
-用 `--version` 安装或重新安装 GitHub cask 会通过设置 `requested_version` 自动 pin；`release_policy` 继续保存 stable 或 prerelease 轨道。直接 URL cask 不使用 pinning；要替换它，使用 `reinstall cask-name --url NEW_URL`。
-
-### Reinstall 选项
-
-- `--url URL`：重新安装前替换直接 package URL。
-- `--app NAME`：刷新 metadata 时，显式设置 `.app` bundle 名称。
-- `--name NAME`：刷新 metadata 时，设置显示名称。
-- `--version VERSION`：对 GitHub source，选择并固定到指定 release 后重新安装。和 `--url` 一起使用时，覆盖直接 URL package 的推导版本。
-- `--prerelease`：把 GitHub cask 切到最新 prerelease 策略，刷新并重新安装。
-- `--stable`：把 GitHub cask 切到最新 stable 策略，刷新并重新安装。
-- `--arch ARCH`：刷新 metadata 时，覆盖架构元数据。直接 URL 模式下只记录为 metadata，不会改变 package URL。
-- `--force`：把 `--force` 传给 Homebrew reinstall，用于覆盖已有 artifacts。
-- `--dry-run`：预览 Homebrew reinstall 命令。和 `--version`、`--prerelease`、`--stable`、GitHub tag URL 或 `--url` 一起使用时，预览刷新后的 metadata，不写文件、不缓存 package、不重新安装。
-
-`--version`、`--prerelease` 和 `--stable` 互斥。不带这些选项、GitHub tag URL 或 `--url` 时，`reinstall` 使用现有生成的 cask，不刷新 source metadata。
-
-### Uninstall 选项
-
-- `--keep-installed`：只移除 ghcask metadata 和生成的 cask 文件，不卸载 app。
-- `--dry-run`：预览 uninstall，不移除 app、metadata 或生成的 cask 文件。
-
-### Dump 和 Restore 选项
-
-- `--file PATH`：使用自定义 `Brewghcask.json` 路径。
-- `--global`：使用 `~/.homebrew/Brewghcask.json`。
-- `--force`：覆盖 dump 输出，或 restore 时覆盖同名 cask。
-- `--dry-run`：预览 dump 或 restore，不写入本地状态。
+锁定是隐式的：一个 cask 在拥有「请求版本」时即为锁定。`--version` 在 install/reinstall
+时锁定，`pin` / `unpin` 切换它。底层的 `latest-stable` / `latest-prerelease` 轨道始终被
+记录，因此 `unpin` 会让 cask 回到该轨道。
 
 ## 备份与恢复
 
-最简单的跨机器备份方式：在旧机器导出 generated cask 和 registry，在新机器先恢复它们，再执行 `brew bundle`：
-
 ```sh
-# 旧机器
+# 旧电脑
 brew ghcask dump --global --force
 
-# 新机器
+# 新电脑
 brew tap oxsean/ghcask
-brew ghcask restore --global
-brew trust --tap oxsean/ghcask
-brew bundle
+brew ghcask restore --global --install   # 一次完成恢复 + 安装缺失的 cask
 ```
 
-`Brewghcask.json` 只保存生成的 cask 定义和 metadata，不包含下载好的安装包、已安装的 app bundle 或 Homebrew cache。
+`restore --install` 会安装尚未安装的已恢复 cask（幂等——已安装的会跳过），因此新机器
+只需一条命令，而不必再单独跑一遍 `brew bundle`。去掉 `--install` 则只写入 cask 定义。
+用 `--file PATH` 可指定自定义路径，替代默认的 `Brewghcask.json`（或 `--global`）。
 
-## GitHub 访问
-
-`ghcask` 会优先使用已经安装并登录的 GitHub CLI。如果 `gh` 不存在或未登录，会回退到 `curl`。
-
-公开仓库可以匿名访问 GitHub API，但匿名访问的 rate limit 更低。为了更稳定，可以使用：
-
-```sh
-gh auth login
-export GH_TOKEN=...
-export GITHUB_TOKEN=...
-```
-
-`ghcask` 不会调用 `gh auth status --show-token`。
-
-## 本地数据和 Brewfile
-
-生成的 cask 和 registry 元数据会保存在本地 generated tap：
-
-```text
-$(brew --repository)/Library/Taps/ghcask/homebrew-local/
-```
-
-distribution tap 会保持干净。
-
-生成 cask 后，Brewfile 可以直接引用它：
+`Brewghcask.json` 只存储生成的 cask 定义和 registry 条目（包含 quarantine 策略）——
+不含下载的安装包或已安装的应用。cask 生成后，Brewfile 可以直接引用它：
 
 ```ruby
 tap "oxsean/ghcask"
 cask "ghcask/local/example"
 ```
 
-在新机器上，先恢复 generated cask，再执行 `brew bundle`：
+## GitHub 访问
+
+ghcask 在 `gh` 已安装并已认证时优先用 GitHub CLI，否则回退到匿名 `curl`（或
+`GH_TOKEN` / `GITHUB_TOKEN`）。要在私有仓库上可靠访问、或避免匿名速率限制：
 
 ```sh
-brew tap oxsean/ghcask
-brew trust --tap oxsean/ghcask
-brew ghcask restore --global
-brew bundle
+gh auth login
+export GH_TOKEN=...
 ```
 
-`brew ghcask dump` 会把生成的 `Casks/*.rb` 文件和 `ghcask.json` 导出成 `Brewghcask.json`。导出前会应用和 `cleanup` 相同的 stale 记录过滤。`restore` 会恢复 dump 中的条目；`--force` 会覆盖同名 cask。
+**元数据和资源下载都会认证。** Release 资源用与查询相同的后端获取：`gh` 已认证时用
+`gh release download`，或在设置了 token 时用带 `Authorization` 头的 GitHub API 资源
+端点。纯匿名 `curl` 只对公开仓库有效。
 
-## 开发 QA
+**私有仓库**：ghcask 会（带认证地）下载资源并预热 Homebrew 缓存，因此 `install` 可用。
+生成的 cask 的 `url` 是标准的 release URL，Homebrew 只有在拥有凭据时才能重新获取；对于
+私有仓库，`brew cleanup` 之后的再次下载需要环境里有你的 GitHub 认证。重跑
+`brew ghcask reinstall <cask> --force` 可重新预热缓存。指向 GitHub 托管文件的
+`install --url`——release 资源（`github.com/.../releases/download/...`）或仓库内文件
+（`raw.githubusercontent.com/...`）——会用你的 token（来自环境或 `gh auth token`）下载，
+因此私有文件可用。指向其它主机的 `--url` 使用无认证的纯 curl（token 绝不会发往 GitHub 之外）。
+
+## 开发
 
 ```sh
-script/test
-ruby cmd/brew-ghcask --help
-ruby cmd/brew-ghcask doctor --dry-run
+script/test                                   # 完整 Minitest 测试套件
+ruby -Ilib -Itest test/install_test.rb        # 运行单个测试文件
+ruby -Ilib -Itest test/install_test.rb -n /quarantine/   # 按名称过滤
+ruby -c cmd/brew-ghcask                        # 语法检查
 GHCASK_BREW_REPOSITORY="$(mktemp -d)" ruby cmd/brew-ghcask install cli/cli --dry-run --arch arm64
 ```
 
 ## 许可证
 
-本项目基于 [Apache License 2.0](LICENSE) 许可发布。
+基于 [Apache License 2.0](LICENSE) 授权。

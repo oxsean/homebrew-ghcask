@@ -1,18 +1,13 @@
 # frozen_string_literal: true
 
+require "ghcask/errors"
+require "ghcask/package_format"
+
 module Ghcask
+  # Scores GitHub Release assets to pick the right macOS package for an
+  # architecture, excluding obvious non-macOS / non-installer files. `--asset`
+  # bypasses scoring with a case-insensitive glob.
   class AssetSelector
-    class Error < StandardError; end
-    class NoMatchError < Error; end
-    class AmbiguousError < Error
-      attr_reader :candidates
-
-      def initialize(candidates)
-        @candidates = candidates
-        super("Multiple plausible macOS assets matched: #{candidates.map(&:name).join(", ")}")
-      end
-    end
-
     ARCH_MARKERS = {
       "arm64" => %w[arm64 aarch64 apple-silicon apple_silicon universal],
       "x86_64" => %w[x64 x86_64 amd64 intel universal]
@@ -23,18 +18,21 @@ module Ghcask
       "x86_64" => %w[arm64 aarch64 apple-silicon apple_silicon]
     }.freeze
 
-    EXTENSION_SCORE = {
-      ".dmg" => 30,
-      ".zip" => 20,
-      ".tar.gz" => 15,
-      ".tgz" => 15
-    }.freeze
+    TYPE_SCORE = { dmg: 30, pkg: 25, zip: 20, tar: 15 }.freeze
 
     EXCLUDED_RE = /
       checksum|checksums|sha256|sha512|\.sig\z|\.asc\z|
-      source|src|symbols?|debug|dSYM|\.tar\.xz\z|
+      source|src|symbols?|debug|dSYM|
       windows|win32|win64|\.exe\z|\.msi\z|linux|ubuntu|debian|rpm|\.deb\z|\.rpm\z
     /ix.freeze
+
+    MACOS_MARKERS = %w[darwin macos osx mac apple].freeze
+
+    FOREIGN_OS_RE = /(?:^|[^a-z0-9])(?:win(?=-)|freebsd|openbsd|netbsd|android)/.freeze
+
+    BARE_BINARY_TAIL = /(?:^|[-.])(?:arm64|aarch64|x86-64|x64|amd64|universal|darwin|macos|osx|mac|apple)\z/.freeze
+
+    ScoredAsset = Struct.new(:asset, :score)
 
     attr_reader :assets, :arch
 
@@ -55,13 +53,26 @@ module Ghcask
                      .select { |entry| entry.score.positive? }
                      .sort_by { |entry| [-entry.score, entry.asset.name] }
 
-      raise NoMatchError, "No compatible macOS release asset was found." if scored.empty?
+      if scored.empty?
+        names = assets.map(&:name).reject { |name| name.to_s.empty? }
+        listing = names.empty? ? "" : " Available assets: #{names.join(", ")}. Pass --asset to pick one."
+        raise NoAssetMatchError, "No compatible macOS release asset was found.#{listing}"
+      end
 
       top_score = scored.first.score
       winners = scored.select { |entry| entry.score == top_score }.map(&:asset)
-      raise AmbiguousError, winners if winners.length > 1
+      raise AmbiguousAssetError, winners if winners.length > 1
 
       winners.first
+    end
+
+    def macos_candidate?(asset)
+      name = asset.name.to_s
+      normalized = normalize_name(name)
+      return false if excluded?(normalized)
+      return true if PackageFormat.package?(name)
+
+      bare_binary?(normalized)
     end
 
     def score(asset)
@@ -69,10 +80,15 @@ module Ghcask
       normalized = normalize_name(name)
       return -100 if excluded?(normalized)
 
-      extension_score = EXTENSION_SCORE.fetch(extension(name), 0)
-      return -100 if extension_score.zero?
+      type = PackageFormat.type(name)
+      base = type ? TYPE_SCORE.fetch(type) : 0
+      if base.zero?
+        return -100 unless bare_binary?(normalized)
 
-      score = extension_score
+        base = 10
+      end
+
+      score = base
       local_markers = ARCH_MARKERS.fetch(arch, [arch])
       other_markers = OTHER_ARCH_MARKERS.fetch(arch, [])
 
@@ -91,51 +107,37 @@ module Ghcask
 
     private
 
-    ScoredAsset = Struct.new(:asset, :score)
-
     def select_by_pattern(pattern)
       matches = assets.select { |asset| File.fnmatch?(pattern, asset.name.to_s, File::FNM_CASEFOLD) }
-      raise NoMatchError, "No release asset matched --asset #{pattern.inspect}." if matches.empty?
-      raise AmbiguousError, matches if matches.length > 1
+      raise NoAssetMatchError, "No release asset matched --asset #{pattern.inspect}." if matches.empty?
+      raise AmbiguousAssetError, matches if matches.length > 1
 
       matches.first
     end
 
     def plausible_macos_assets
-      @plausible_macos_assets ||= assets.select do |asset|
-        score_without_single_asset_bonus(asset).positive?
-      end
+      @plausible_macos_assets ||= assets.select { |asset| plausible?(asset) }
     end
 
-    def score_without_single_asset_bonus(asset)
+    def plausible?(asset)
       name = asset.name.to_s
-      normalized = normalize_name(name)
-      return -100 if excluded?(normalized)
+      return false if excluded?(normalize_name(name))
 
-      extension_score = EXTENSION_SCORE.fetch(extension(name), 0)
-      return -100 if extension_score.zero?
-
-      extension_score
+      PackageFormat.package?(name)
     end
 
     def excluded?(normalized)
-      normalized.match?(EXCLUDED_RE)
+      normalized.match?(EXCLUDED_RE) || normalized.match?(FOREIGN_OS_RE)
+    end
+
+    def bare_binary?(normalized)
+      marker_match?(normalized, MACOS_MARKERS) && normalized.match?(BARE_BINARY_TAIL)
     end
 
     def marker_match?(normalized, markers)
       markers.any? do |marker|
-        normalized.match?(/(^|[^a-z0-9])#{Regexp.escape(marker.downcase)}([^a-z0-9]|\z)/)
+        normalized.match?(/(^|[^a-z0-9])#{Regexp.escape(marker.downcase.tr("_", "-"))}([^a-z0-9]|\z)/)
       end
-    end
-
-    def extension(name)
-      lower = name.downcase
-      return ".dmg" if lower.end_with?(".dmg")
-      return ".zip" if lower.end_with?(".zip")
-      return ".tar.gz" if lower.end_with?(".tar.gz")
-      return ".tgz" if lower.end_with?(".tgz")
-
-      File.extname(lower)
     end
 
     def normalize_name(name)

@@ -1,66 +1,55 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "tmpdir"
 
-require "ghcask/registry"
-
-class RegistryTest < Minitest::Test
-  def registry_in_tempdir
-    Dir.mktmpdir do |dir|
-      yield Ghcask::Registry.new(File.join(dir, "ghcask.json"))
-    end
+class RegistryTest < GhcaskTest::Case
+  def registry
+    @registry ||= Ghcask::Registry.new(File.join(@tmp, "ghcask.json"))
   end
 
-  def test_ensure_exists_writes_empty_registry
-    registry_in_tempdir do |registry|
-      assert_equal({ "version" => 1, "casks" => {} }, registry.ensure_exists)
-      assert_equal({ "version" => 1, "casks" => {} }, registry.load)
-    end
+  def test_ensure_exists_creates_empty_catalog
+    cat = registry.ensure_exists
+    assert_empty cat.names
+    assert File.exist?(registry.path)
+  end
+
+  def test_load_if_exists_returns_nil_without_file
+    assert_nil registry.load_if_exists
   end
 
   def test_save_and_load_round_trip
-    registry_in_tempdir do |registry|
-      data = {
-        "version" => 1,
-        "casks" => {
-          "example" => {
-            "repo" => "owner/repo",
-            "version" => "1.2.3"
-          }
-        }
-      }
+    cat = Ghcask::Catalog.new
+    cat["app"] = entry
+    registry.save(cat)
 
-      registry.save(data)
-
-      assert_equal data, registry.load
-    end
+    loaded = registry.load
+    assert_equal %w[app], loaded.names
+    assert_equal entry, loaded["app"]
   end
 
-  def test_save_writes_without_validation_but_load_validates
-    registry_in_tempdir do |registry|
-      registry.save("nope")
-
-      error = assert_raises(Ghcask::Registry::CorruptError) { registry.load }
-      assert_includes error.message, "registry must be a JSON object"
-    end
+  def test_atomic_write_leaves_no_temp_files
+    registry.save(Ghcask::Catalog.new)
+    leftovers = Dir.children(@tmp).grep(/\.tmp\z/)
+    assert_empty leftovers
   end
 
-  def test_corrupted_registry_raises_clear_error
-    registry_in_tempdir do |registry|
-      File.write(registry.path, "{ nope")
-
-      error = assert_raises(Ghcask::Registry::CorruptError) { registry.load }
-      assert_includes error.message, "registry is not valid JSON"
-    end
+  def test_corrupt_json_raises
+    File.write(registry.path, "{not json")
+    assert_raises(Ghcask::CorruptRegistryError) { registry.load }
   end
 
-  def test_invalid_registry_shape_raises_clear_error
-    registry_in_tempdir do |registry|
-      File.write(registry.path, JSON.dump("nope"))
+  def test_wrong_version_raises
+    File.write(registry.path, JSON.generate("version" => 99, "casks" => {}))
+    assert_raises(Ghcask::CorruptRegistryError) { registry.load }
+  end
 
-      error = assert_raises(Ghcask::Registry::CorruptError) { registry.load }
-      assert_includes error.message, "registry must be a JSON object"
-    end
+  def test_find_by_repo
+    cat = Ghcask::Catalog.new
+    cat["app"] = entry("repo" => "acme/app")
+    name, found = cat.find_by_repo("acme/app")
+    assert_equal "app", name
+    assert_equal "acme/app", found.repo
+    assert_nil cat.find_by_repo("nope/none")
+    assert_nil cat.find_by_repo(nil)
   end
 end
