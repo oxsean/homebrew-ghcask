@@ -57,6 +57,26 @@ class PackageTest < GhcaskTest::Case
     assert_raises(Ghcask::DownloadError) { Ghcask::Package.download(asset, destination_dir: @tmp) }
   end
 
+  def test_error_text_drops_hdiutil_deprecation_warning
+    stderr = "hdiutil: WARNING: 'hdiutil attach' is deprecated.\nhdiutil: attach canceled\n"
+    assert_equal "hdiutil: attach canceled", Ghcask::Package.error_text("out", stderr)
+    assert_equal "out", Ghcask::Package.error_text("out", "hdiutil: WARNING: only noise\n")
+  end
+
+  def test_parse_mountpoint_skips_license_agreement_text
+    plist = <<~PLIST
+      Apache License
+      Version 2.0
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0"><dict><key>system-entities</key><array>
+      <dict><key>dev-entry</key><string>/dev/disk9</string></dict>
+      <dict><key>mount-point</key><string>/Volumes/Example</string></dict>
+      </array></dict></plist>
+    PLIST
+    assert_equal "/Volumes/Example", Ghcask::Package.parse_mountpoint(plist)
+  end
+
   def test_find_apps_skips_nested_bundles
     FileUtils.mkdir_p(File.join(@tmp, "Top.app", "Contents", "Helper.app"))
     apps = Ghcask::Package.find_apps(@tmp)

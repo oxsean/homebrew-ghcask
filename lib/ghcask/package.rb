@@ -172,7 +172,9 @@ module Ghcask
 
     def infer_dmg_app(path, override = nil)
       mountpoint = nil
-      stdout, stderr, status = Open3.capture3("hdiutil", "attach", "-nobrowse", "-readonly", "-plist", path)
+      # "y" accepts a license agreement prompt; without it hdiutil cancels the attach.
+      stdout, stderr, status = Open3.capture3("hdiutil", "attach", "-nobrowse", "-readonly", "-plist", path,
+                                              stdin_data: "y\n")
       raise AppInferenceError, "Failed to mount dmg asset: #{error_text(stdout, stderr)}" unless status.success?
 
       mountpoint = parse_mountpoint(stdout)
@@ -199,7 +201,8 @@ module Ghcask
     def parse_mountpoint(plist)
       Dir.mktmpdir("ghcask-plist-") do |dir|
         path = File.join(dir, "attach.plist")
-        File.write(path, plist)
+        # A license agreement is echoed before the plist.
+        File.write(path, plist[/<\?xml.*/m].to_s)
         stdout, _stderr, status = Open3.capture3("plutil", "-extract", "system-entities", "json", "-o", "-", path)
         return nil unless status.success?
 
@@ -273,7 +276,8 @@ module Ghcask
     end
 
     def error_text(stdout, stderr)
-      stderr.strip.empty? ? stdout.strip : stderr.strip
+      text = stderr.lines.grep_v(/^hdiutil: WARNING:/).join.strip
+      text.empty? ? stdout.strip : text
     end
 
     def present?(value)
