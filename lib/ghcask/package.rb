@@ -172,7 +172,7 @@ module Ghcask
 
     def infer_dmg_app(path, override = nil)
       mountpoint = nil
-      # "y" accepts a license agreement prompt; without it hdiutil cancels the attach.
+      # "y" answers a license agreement prompt.
       stdout, stderr, status = Open3.capture3("hdiutil", "attach", "-nobrowse", "-readonly", "-plist", path,
                                               stdin_data: "y\n")
       raise AppInferenceError, "Failed to mount dmg asset: #{error_text(stdout, stderr)}" unless status.success?

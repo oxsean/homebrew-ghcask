@@ -253,4 +253,26 @@ class GitHubTest < GhcaskTest::Case
     release = client.select_release("acme/app", policy: "latest-stable")
     assert_equal "v2.0.0", release.tag_name
   end
+  def test_newest_skips_releases_without_an_acceptable_asset
+    summaries = [
+      release(tag: "qa-evidence", assets: ["evidence.png"], published_at: Time.at(200)),
+      release(tag: "v1.4.178", assets: ["Orca-arm64-mac.zip"], published_at: Time.at(100))
+    ]
+    picked = Ghcask::GitHub::Newest.with_assets(
+      summaries, policy: "latest-stable", fetch_full: ->(s) { s },
+      acceptable: ->(r) { Ghcask::AssetSelector.new(r.assets, arch: "arm64").compatible? }
+    )
+    assert_equal "v1.4.178", picked.tag_name
+  end
+
+  def test_newest_opens_at_most_the_candidate_limit
+    opened = []
+    summaries = (1..9).map { |i| release(tag: "v#{i}", assets: ["notes.txt"], published_at: Time.at(i)) }
+    Ghcask::GitHub::Newest.with_assets(
+      summaries, policy: "latest-stable",
+      fetch_full: ->(s) { opened << s.tag_name; s },
+      acceptable: ->(_r) { false }
+    )
+    assert_equal Ghcask::GitHub::Newest::CANDIDATE_LIMIT, opened.length
+  end
 end

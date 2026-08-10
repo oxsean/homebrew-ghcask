@@ -66,6 +66,15 @@ module Ghcask
       winners.first
     end
 
+    def compatible?(pattern: nil)
+      select(pattern: pattern)
+      true
+    rescue AmbiguousAssetError
+      true
+    rescue NoAssetMatchError
+      false
+    end
+
     def macos_candidate?(asset)
       name = asset.name.to_s
       normalized = normalize_name(name)

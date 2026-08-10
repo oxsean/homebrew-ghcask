@@ -98,7 +98,9 @@ module Ghcask
     end
 
     def resolve(github, fetch_description: true)
-      release = github.select_release(@repo, policy: @release_policy, requested_version: @requested_version)
+      release = github.select_release(@repo, policy: @release_policy, requested_version: @requested_version) do |candidate|
+        AssetSelector.new(candidate.assets, arch: arch).compatible?(pattern: @asset_pattern)
+      end
       asset = AssetSelector.new(release.assets, arch: arch).select(pattern: @asset_pattern)
       description = @force ? nil : @existing&.desc
       description = Ghcask.concise_desc(github.repo_description(@repo)) if fetch_description && description.to_s.empty?

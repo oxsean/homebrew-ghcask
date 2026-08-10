@@ -42,12 +42,20 @@ module Ghcask
           raise UsageError, "update does not accept cask names. Use `brew ghcask upgrade cask-name` to target one app." if !upgrade && !options[:targets].empty?
 
           names = upgrade ? target_names(catalog, options[:targets]) : catalog.names
-          names.each { |name| refresh(catalog, name, options) }
+          refreshed, failed = names.partition { |name| refresh_safely(catalog, name, options) }
           tap.registry.save(catalog) unless options[:dry_run]
 
-          upgrade_casks(catalog, names, options) if upgrade && !options[:dry_run]
-          0
+          upgrade_casks(catalog, refreshed, options) if upgrade && !options[:dry_run]
+          failed.empty? ? 0 : 1
         end
+      end
+
+      def refresh_safely(catalog, name, options)
+        refresh(catalog, name, options)
+        true
+      rescue Ghcask::Error => e
+        stderr.puts "Error: #{name}: #{e.message}"
+        false
       end
 
       def refresh(catalog, name, options)

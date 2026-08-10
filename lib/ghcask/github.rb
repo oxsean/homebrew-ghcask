@@ -21,10 +21,10 @@ module Ghcask
         @host = host
       end
 
-      def select_release(repo, policy:, requested_version: nil)
+      def select_release(repo, policy:, requested_version: nil, &acceptable)
         include_prerelease = policy == "latest-prerelease" || !requested_version.to_s.empty?
         backend = backend_for(include_prerelease: include_prerelease)
-        backend.select_release(repo, policy: policy, requested_version: requested_version)
+        backend.select_release(repo, policy: policy, requested_version: requested_version, &acceptable)
       end
 
       def download(repo:, tag:, asset:, destination_dir:, stdout: nil)
@@ -115,19 +115,22 @@ module Ghcask
       end
     end
 
-    # Shared "prefer the newest release that actually has assets" walk used by both
-    # backends once they have a list of release summaries.
+    # Walks the newest CANDIDATE_LIMIT releases for one that has assets and passes
+    # `acceptable`; falls back to ReleaseSelector when none does.
     module Newest
+      CANDIDATE_LIMIT = 5
+
       module_function
 
-      def with_assets(summaries, policy:, fetch_full:)
+      def with_assets(summaries, policy:, fetch_full:, acceptable: nil)
         candidates = summaries.reject(&:draft)
         candidates = candidates.reject(&:prerelease) if policy == "latest-stable"
         candidates = candidates.sort_by { |release| release.published_at || Time.at(0) }.reverse
 
-        candidates.each do |summary|
+        candidates.first(CANDIDATE_LIMIT).each do |summary|
           full = fetch_full.call(summary)
-          return full unless full.assets.empty?
+          next if full.assets.empty?
+          return full if acceptable.nil? || acceptable.call(full)
         end
 
         ReleaseSelector.new(summaries).select(policy: policy)
@@ -143,18 +146,18 @@ module Ghcask
         @include_list = include_list
       end
 
-      def select_release(repo, policy:, requested_version: nil)
+      def select_release(repo, policy:, requested_version: nil, &acceptable)
         unless requested_version.to_s.empty? && !@include_list
           summaries = list_summaries(repo)
           return view_release(repo, ReleaseSelector.new(summaries).select(policy: policy, requested_version: requested_version).tag_name) unless requested_version.to_s.empty?
 
-          return Newest.with_assets(summaries, policy: policy, fetch_full: ->(s) { view_release(repo, s.tag_name) })
+          return newest(repo, summaries, policy, acceptable)
         end
 
         release = view_release(repo, nil)
-        return release unless release.assets.empty?
+        return release unless release.assets.empty? || (acceptable && !acceptable.call(release))
 
-        Newest.with_assets(list_summaries(repo), policy: policy, fetch_full: ->(s) { view_release(repo, s.tag_name) })
+        newest(repo, list_summaries(repo), policy, acceptable)
       end
 
       def download(repo:, tag:, asset:, destination_dir:, stdout: nil)
@@ -191,6 +194,11 @@ module Ghcask
 
       private
 
+      def newest(repo, summaries, policy, acceptable)
+        Newest.with_assets(summaries, policy: policy, acceptable: acceptable,
+                                      fetch_full: ->(s) { view_release(repo, s.tag_name) })
+      end
+
       def list_summaries(repo)
         result = @runner.capture(["gh", "release", "list", "-R", repo, "--limit", "100", "--json", LIST_FIELDS])
         map_error!(result, repo: repo)
@@ -222,16 +230,16 @@ module Ghcask
         @host = host
       end
 
-      def select_release(repo, policy:, requested_version: nil)
+      def select_release(repo, policy:, requested_version: nil, &acceptable)
         prerelease = prerelease_needed?(policy, requested_version)
         releases = fetch(repo, include_prerelease: prerelease)
         return ReleaseSelector.new(releases).select(policy: policy, requested_version: requested_version) unless requested_version.to_s.empty?
 
-        releases = fetch(repo, include_prerelease: true) if !prerelease && releases.length == 1 && releases.first.assets.empty?
+        releases = fetch(repo, include_prerelease: true) if !prerelease && releases.length == 1 && unusable?(releases.first, acceptable)
 
         return ReleaseSelector.new(releases).select(policy: policy) if releases.length == 1
 
-        Newest.with_assets(releases, policy: policy, fetch_full: ->(summary) { summary })
+        Newest.with_assets(releases, policy: policy, acceptable: acceptable, fetch_full: ->(summary) { summary })
       end
 
       def download(repo:, tag:, asset:, destination_dir:, stdout: nil)
@@ -291,6 +299,10 @@ module Ghcask
 
       def token_value
         GitHub.env_token(@env)
+      end
+
+      def unusable?(release, acceptable)
+        release.assets.empty? || (acceptable && !acceptable.call(release))
       end
 
       def prerelease_needed?(policy, requested_version)

@@ -41,6 +41,18 @@ class UpgradeTest < GhcaskTest::Case
     refute_includes stdout, "already current"
   end
 
+  def test_update_persists_refreshes_when_another_cask_fails
+    seed(entry("cask" => "bad", "repo" => "acme/bad"), entry("cask" => "good", "repo" => "acme/good"))
+    github = GhcaskTest::FakeGitHub.new({
+      "acme/bad" => Ghcask::SourceError.new("no compatible asset"),
+      "acme/good" => release(tag: "v2.0.0", assets: [["App-arm64.dmg", "https://example.com/App.dmg"]])
+    })
+    code = upgrader([], github: github).update
+    assert_equal 1, code
+    assert_includes stderr, "Error: bad: no compatible asset"
+    assert_equal "2.0.0", catalog["good"].version
+  end
+
   def test_update_skips_url_casks
     seed(url_entry)
     upgrader([], github: GhcaskTest::ExplodingGitHub.new).update
