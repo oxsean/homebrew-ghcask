@@ -176,6 +176,29 @@ class InstallTest < GhcaskTest::Case
     assert_empty @brew.installs
   end
 
+  # Use the real planner so dry-run output cannot hide unsupported Homebrew options.
+  def test_dry_run_plan_respects_homebrew_quarantine_support
+    seed(entry)
+    [
+      [:install, "  --[no-]quarantine\n", "Would run: brew install --cask --no-quarantine ghcask/local/app"],
+      [:reinstall, "  --cask\n", "Would run: brew reinstall --cask ghcask/local/app"]
+    ].each do |action, help, expected_plan|
+      runner = GhcaskTest::FakeRunner.new
+      runner.on("brew", action.to_s, "--help", stdout: help)
+      out = StringIO.new
+      err = StringIO.new
+      homebrew = Ghcask::Homebrew::Brew.new(runner: runner, stdout: out, stderr: err)
+      command = Ghcask::Commands::Install.new(
+        %w[acme/app -s --dry-run], tap: tap, brew: homebrew,
+        github: GhcaskTest::ExplodingGitHub.new, stdout: out, stderr: err
+      )
+
+      assert_equal 0, command.public_send(action), err.string
+      assert_equal [expected_plan], out.string.lines.grep(/\AWould run:/).map(&:chomp)
+      assert_equal [["brew", action.to_s, "--help"]], runner.commands
+    end
+  end
+
   def test_install_passes_unrecognized_flags_after_dashdash_to_brew
     installer(%w[acme/app -- --appdir=/Apps --verbose]).install
     assert_equal ["--appdir=/Apps", "--verbose"], @brew.installs.first[:extra]

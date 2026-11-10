@@ -15,14 +15,45 @@ class HomebrewTest < GhcaskTest::Case
     ENV["GHCASK_BREW_REPOSITORY"] = original
   end
 
-  def test_install_command_includes_force_and_no_quarantine
+  def test_install_command_includes_force_and_supported_no_quarantine
     runner = GhcaskTest::FakeRunner.new
+    runner.on("brew", "install", "--help", stdout: "  --[no-]quarantine  Enable or disable quarantine\n")
     brew(runner).install("app", force: true, quarantine: false)
     command = runner.commands.last
     assert_equal %w[brew install --cask --force --no-quarantine ghcask/local/app], command
     # brew-style: a `==>` step marker, and no redundant completion line.
     assert_includes @out.string, "==> brew install"
     refute_includes @out.string, "Homebrew finished"
+  end
+
+  def test_no_quarantine_support_is_checked_once_per_action
+    runner = GhcaskTest::FakeRunner.new
+    runner.on("brew", "install", "--help", stdout: "  --cask  Install casks\n")
+    runner.on("brew", "reinstall", "--help", stdout: "  --no-quarantine  Disable quarantine\n")
+    homebrew = brew(runner)
+
+    homebrew.install("first", quarantine: false)
+    homebrew.install("second", quarantine: false)
+    homebrew.reinstall("first", quarantine: false)
+
+    assert_equal [
+      %w[brew install --help],
+      %w[brew install --cask ghcask/local/first],
+      %w[brew install --cask ghcask/local/second],
+      %w[brew reinstall --help],
+      %w[brew reinstall --cask --no-quarantine ghcask/local/first]
+    ], runner.commands
+  end
+
+  def test_no_quarantine_probe_failure_stops_installation
+    runner = GhcaskTest::FakeRunner.new
+    runner.on("brew", "install", "--help", stderr: "Error: help unavailable", ok: false)
+
+    error = assert_raises(Ghcask::HomebrewError) { brew(runner).install("app", quarantine: false) }
+
+    assert_includes error.message, "Could not check Homebrew install options"
+    assert_includes error.message, "Error: help unavailable"
+    assert_equal [%w[brew install --help]], runner.commands
   end
 
   def test_extra_flags_forwarded_before_token
@@ -43,7 +74,7 @@ class HomebrewTest < GhcaskTest::Case
   def test_install_defaults_to_quarantine_on
     runner = GhcaskTest::FakeRunner.new
     brew(runner).install("app")
-    assert_equal %w[brew install --cask ghcask/local/app], runner.commands.last
+    assert_equal [%w[brew install --cask ghcask/local/app]], runner.commands
   end
 
   def test_install_failure_raises_with_inspect_hint

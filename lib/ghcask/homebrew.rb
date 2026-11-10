@@ -166,13 +166,27 @@ module Ghcask
 
       private
 
+      # Build install/reinstall arguments, forwarding the quarantine opt-out only when supported.
       def action_command(name, action, force:, quarantine:, extra: [])
         command = ["brew", action, "--cask"]
         command << "--force" if force
-        command << "--no-quarantine" unless quarantine
+        command << "--no-quarantine" if !quarantine && supports_no_quarantine?(action)
         command.concat(extra)
         command << token(name)
         command
+      end
+
+      # Quarantine removal still runs after installation when Homebrew lacks this option.
+      def supports_no_quarantine?(action)
+        @no_quarantine_support ||= {}
+        @no_quarantine_support.fetch(action) do
+          result = @runner.capture(["brew", action, "--help"])
+          unless result.success?
+            raise HomebrewError, "Could not check Homebrew #{action} options: #{summarize(result)}"
+          end
+
+          @no_quarantine_support[action] = result.stdout.match?(/^\s*--(?:\[no-\]|no-)quarantine(?:\s|$)/)
+        end
       end
 
       def cache_root
